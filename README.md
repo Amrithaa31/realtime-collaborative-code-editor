@@ -1,5 +1,11 @@
 # CodeTogether — Real-Time Collaborative Code Editor
 
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Live_Demo-black?logo=vercel)](https://realtime-collaborative-code-editor-sable-five.vercel.app)
+[![GitHub Repository](https://img.shields.io/badge/GitHub-Amrithaa31-181717?logo=github)](https://github.com/Amrithaa31/realtime-collaborative-code-editor)
+
+* **Live Vercel Application:** [https://realtime-collaborative-code-editor-sable-five.vercel.app](https://realtime-collaborative-code-editor-sable-five.vercel.app)
+* **GitHub Repository:** [https://github.com/Amrithaa31/realtime-collaborative-code-editor](https://github.com/Amrithaa31/realtime-collaborative-code-editor)
+
 A full-stack, browser-based collaborative coding application built using **React**, **Node.js**, **Express**, and **Socket.IO**. It allows multiple developers or students to create coding rooms, share a Room ID, write code together, and view synchronized updates in real time with zero page refreshes.
 
 ---
