@@ -1,20 +1,19 @@
 {
-  "name": "realtime-collaborative-code-editor",
+  "name": "codetogether",
   "version": "1.0.0",
-  "description": "Real-Time Collaborative Code Editor (Localhost)",
+  "description": "CodeTogether - Real-Time Collaborative Code Editor",
   "scripts": {
     "server": "cd server && npm start",
-    "client": "cd client && npm run dev",
-    "test": "cd server && npm test"
+    "client": "cd client && npm run dev"
   },
   "keywords": [
     "realtime",
     "collaborative",
     "code-editor",
     "socket.io",
-    "monaco-editor",
-    "localhost"
+    "react",
+    "express"
   ],
-  "author": "",
+  "author": "CodeTogether Team",
   "license": "ISC"
 }

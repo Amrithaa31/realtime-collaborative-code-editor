@@ -1,16 +1,28 @@
 {
-  "name": "collaborative-code-editor-server",
+  "name": "codetogether-server",
   "version": "1.0.0",
-  "description": "Localhost Real-Time Collaborative Code Editor Server",
+  "description": "Backend server for Real-Time Collaborative Code Editor using Express and Socket.IO",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js",
-    "test": "node test-local.js"
+    "dev": "node server.js"
   },
+  "keywords": [
+    "real-time",
+    "collaborative",
+    "code-editor",
+    "socket.io",
+    "express",
+    "node"
+  ],
+  "author": "CodeTogether Team",
+  "license": "ISC",
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "socket.io": "^4.7.5"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
   }
 }

@@ -1,246 +1,400 @@
+/**
+ * CodeTogether - Real-Time Collaborative Code Editor
+ * Backend Server (Node.js, Express, Socket.IO)
+ * 
+ * Manages rooms, participants, code state, and real-time synchronization
+ * completely in-memory using JavaScript Maps.
+ */
+
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const { Server } = require('socket.io');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 
+// Configurable Port with fallback
 const PORT = process.env.PORT || 5000;
-const STORAGE_FILE = path.join(__dirname, 'saved-code.json');
 
-// Middlewares
-app.use(cors({
-  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+// CORS configuration for frontend dev servers
+const corsOptions = {
+  origin: (origin, callback) => {
+    // Allow local development origins (localhost, 127.0.0.1 on any port)
+    if (!origin || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS origin not allowed'));
+    }
+  },
   methods: ['GET', 'POST'],
   credentials: true
-}));
+};
+
+app.use(cors(corsOptions));
 app.use(express.json());
 
-// In-memory active room storage:
-// roomId -> { code: string, language: string, users: Set(socketId) }
-const activeRooms = new Map();
+// In-Memory Storage
+// Map of roomId -> {
+//   id: string,
+//   code: string,
+//   language: string,
+//   participants: Map<socketId, { id: string, username: string }>
+// }
+const rooms = new Map();
 
-// Helper to read saved code from saved-code.json
-function loadSavedData() {
-  try {
-    if (!fs.existsSync(STORAGE_FILE)) {
-      fs.writeFileSync(STORAGE_FILE, JSON.stringify({}, null, 2), 'utf-8');
-      return {};
+// Starter code templates for supported languages
+const STARTER_TEMPLATES = {
+  javascript: `// JavaScript Starter Template
+function greet(name) {
+  return \`Hello, \${name}! Welcome to CodeTogether.\`;
+}
+
+console.log(greet("Developer"));
+`,
+  python: `# Python Starter Template
+def greet(name):
+    return f"Hello, {name}! Welcome to CodeTogether."
+
+print(greet("Developer"))
+`,
+  java: `// Java Starter Template
+public class Main {
+    public static void main(String[] args) {
+        System.out.println("Hello, Developer! Welcome to CodeTogether.");
     }
-    const data = fs.readFileSync(STORAGE_FILE, 'utf-8');
-    return JSON.parse(data || '{}');
-  } catch (err) {
-    console.error('Error reading saved-code.json:', err.message);
-    return {};
-  }
 }
+`,
+  c: `// C Starter Template
+#include <stdio.h>
 
-// Helper to write saved code to saved-code.json
-function persistData(roomId, code, language) {
-  try {
-    const allData = loadSavedData();
-    allData[roomId] = {
-      code,
-      language: language || 'javascript',
-      updatedAt: new Date().toISOString()
-    };
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(allData, null, 2), 'utf-8');
-    return true;
-  } catch (err) {
-    console.error('Error writing to saved-code.json:', err.message);
-    return false;
-  }
+int main() {
+    printf("Hello, Developer! Welcome to CodeTogether.\\n");
+    return 0;
 }
+`,
+  html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CodeTogether HTML Preview</title>
+</head>
+<body>
+  <h1>Hello from CodeTogether!</h1>
+  <p>Start collaborating in real-time with your team.</p>
+</body>
+</html>
+`
+};
 
-// Helper to get or initialize room data
-function getRoomData(roomId) {
-  if (activeRooms.has(roomId)) {
-    return activeRooms.get(roomId);
+/**
+ * Generate a friendly unique room ID
+ * Example: "room-k9m2p4"
+ */
+function generateRoomId() {
+  const chars = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let randomStr = '';
+  for (let i = 0; i < 6; i++) {
+    randomStr += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-
-  // Check saved-code.json if previously saved
-  const savedData = loadSavedData();
-  const savedRoom = savedData[roomId];
-
-  const initialCode = savedRoom
-    ? savedRoom.code
-    : `// Welcome to Real-Time Collaborative Code Editor!\n// Room: ${roomId}\n\nfunction main() {\n  console.log("Hello from room ${roomId}!");\n}\n\nmain();\n`;
-
-  const initialLang = savedRoom ? savedRoom.language : 'javascript';
-
-  const roomState = {
-    code: initialCode,
-    language: initialLang,
-    users: new Set()
-  };
-
-  activeRooms.set(roomId, roomState);
-  return roomState;
+  return `room-${randomStr}`;
 }
 
 // REST Endpoints
+app.get('/', (req, res) => {
+  res.send('CodeTogether backend is running.');
+});
+
 app.get('/api/health', (req, res) => {
   res.json({
-    status: 'ok',
-    message: 'Collaborative Code Editor Server running locally on port ' + PORT,
-    activeRoomsCount: activeRooms.size
+    status: 'online',
+    timestamp: new Date().toISOString(),
+    activeRoomsCount: rooms.size
   });
 });
 
-app.get('/api/rooms/:roomId', (req, res) => {
+app.get('/api/rooms/:roomId/exists', (req, res) => {
   const { roomId } = req.params;
-  const room = getRoomData(roomId);
-  res.json({
-    roomId,
-    code: room.code,
-    language: room.language,
-    userCount: room.users.size
-  });
+  const exists = rooms.has(roomId);
+  res.json({ roomId, exists });
 });
 
-app.post('/api/rooms/:roomId/save', (req, res) => {
-  const { roomId } = req.params;
-  const { code, language } = req.body;
-  const success = persistData(roomId, code, language);
-  if (success) {
-    res.json({ success: true, message: 'Code saved successfully to saved-code.json' });
-  } else {
-    res.status(500).json({ success: false, message: 'Failed to write code to disk' });
-  }
-});
-
-// Socket.IO Real-time setup
+// Initialize Socket.IO
 const io = new Server(server, {
-  cors: {
-    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
-    methods: ['GET', 'POST'],
-    credentials: true
-  }
+  cors: corsOptions
 });
 
 io.on('connection', (socket) => {
-  let currentRoomId = null;
+  console.log(`[Socket Connected] ID: ${socket.id}`);
 
-  // Event: create-room
-  socket.on('create-room', (callback) => {
-    // Generate clean 6-character room id
-    const newRoomId = 'room-' + Math.random().toString(36).substring(2, 8);
-    const room = getRoomData(newRoomId);
+  /**
+   * Helper: Remove socket from all existing rooms it is currently in
+   */
+  const leaveCurrentRooms = () => {
+    for (const [roomId, room] of rooms.entries()) {
+      if (room.participants.has(socket.id)) {
+        const user = room.participants.get(socket.id);
+        room.participants.delete(socket.id);
+        socket.leave(roomId);
+        console.log(`[Leave] User '${user.username}' (${socket.id}) left room '${roomId}'`);
 
-    if (typeof callback === 'function') {
-      callback({ roomId: newRoomId, code: room.code, language: room.language });
+        // Check if room is now empty
+        if (room.participants.size === 0) {
+          rooms.delete(roomId);
+          console.log(`[Room Deleted] Room '${roomId}' was empty and has been removed.`);
+        } else {
+          // Notify remaining users in the room
+          const participantList = Array.from(room.participants.values());
+          io.to(roomId).emit('participants-updated', {
+            participants: participantList,
+            userCount: participantList.length,
+            message: `${user.username} left the room.`
+          });
+        }
+      }
+    }
+  };
+
+  /**
+   * CREATE ROOM
+   * Client requests to create a new room
+   */
+  socket.on('create-room', ({ username } = {}, callback) => {
+    try {
+      leaveCurrentRooms();
+
+      let newRoomId = generateRoomId();
+      // Ensure uniqueness
+      while (rooms.has(newRoomId)) {
+        newRoomId = generateRoomId();
+      }
+
+      const assignedUsername = (username && username.trim()) ? username.trim() : 'User 1';
+      const initialLang = 'javascript';
+      const initialCode = STARTER_TEMPLATES[initialLang];
+
+      const roomData = {
+        id: newRoomId,
+        code: initialCode,
+        language: initialLang,
+        participants: new Map()
+      };
+
+      roomData.participants.set(socket.id, {
+        id: socket.id,
+        username: assignedUsername
+      });
+
+      rooms.set(newRoomId, roomData);
+      socket.join(newRoomId);
+
+      console.log(`[Room Created] Room: ${newRoomId} by ${assignedUsername} (${socket.id})`);
+
+      const participantsList = Array.from(roomData.participants.values());
+
+      const response = {
+        success: true,
+        roomId: newRoomId,
+        code: roomData.code,
+        language: roomData.language,
+        participants: participantsList,
+        username: assignedUsername
+      };
+
+      if (typeof callback === 'function') {
+        callback(response);
+      }
+      socket.emit('room-created', response);
+    } catch (err) {
+      console.error('Error creating room:', err);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: 'Failed to create room' });
+      }
     }
   });
 
-  // Event: join-room
-  socket.on('join-room', ({ roomId }, callback) => {
-    if (!roomId || !roomId.trim()) {
-      if (typeof callback === 'function') callback({ error: 'Room ID is required' });
-      return;
-    }
-
-    const cleanRoomId = roomId.trim();
-
-    // Leave any previous room
-    if (currentRoomId) {
-      socket.leave(currentRoomId);
-      const prevRoom = activeRooms.get(currentRoomId);
-      if (prevRoom) {
-        prevRoom.users.delete(socket.id);
-        io.to(currentRoomId).emit('user-count-update', { userCount: prevRoom.users.size });
+  /**
+   * JOIN ROOM
+   * Client requests to join an existing room
+   */
+  socket.on('join-room', ({ roomId, username } = {}, callback) => {
+    try {
+      if (!roomId || !roomId.trim()) {
+        const errorMsg = 'Please provide a valid Room ID.';
+        if (typeof callback === 'function') callback({ success: false, message: errorMsg });
+        socket.emit('room-error', { message: errorMsg });
+        return;
       }
-    }
 
-    currentRoomId = cleanRoomId;
-    socket.join(cleanRoomId);
+      const cleanRoomId = roomId.trim();
 
-    const room = getRoomData(cleanRoomId);
-    room.users.add(socket.id);
+      // Check if room exists in memory
+      if (!rooms.has(cleanRoomId)) {
+        const errorMsg = `Room "${cleanRoomId}" does not exist. Please check the ID or create a new room.`;
+        if (typeof callback === 'function') callback({ success: false, message: errorMsg });
+        socket.emit('room-error', { message: errorMsg });
+        return;
+      }
 
-    // Notify room of user count
-    io.to(cleanRoomId).emit('user-count-update', { userCount: room.users.size });
+      leaveCurrentRooms();
 
-    // Send latest existing room code & language to the newly joined user
-    if (typeof callback === 'function') {
-      callback({
+      const room = rooms.get(cleanRoomId);
+
+      // Determine friendly username
+      const nextUserNumber = room.participants.size + 1;
+      const assignedUsername = (username && username.trim()) 
+        ? username.trim() 
+        : `User ${nextUserNumber}`;
+
+      room.participants.set(socket.id, {
+        id: socket.id,
+        username: assignedUsername
+      });
+
+      socket.join(cleanRoomId);
+      console.log(`[User Joined] ${assignedUsername} (${socket.id}) joined room '${cleanRoomId}'`);
+
+      const participantsList = Array.from(room.participants.values());
+
+      const response = {
         success: true,
         roomId: cleanRoomId,
         code: room.code,
         language: room.language,
-        userCount: room.users.size
-      });
-    }
+        participants: participantsList,
+        username: assignedUsername
+      };
 
-    socket.emit('code-update', { code: room.code, language: room.language });
+      // Acknowledge joined user
+      if (typeof callback === 'function') {
+        callback(response);
+      }
+      socket.emit('room-joined', response);
+
+      // Broadcast updated participants to everyone in the room
+      io.to(cleanRoomId).emit('participants-updated', {
+        participants: participantsList,
+        userCount: participantsList.length,
+        message: `${assignedUsername} joined the room.`
+      });
+    } catch (err) {
+      console.error('Error joining room:', err);
+      if (typeof callback === 'function') {
+        callback({ success: false, message: 'An error occurred while joining the room.' });
+      }
+    }
   });
 
-  // Event: code-change (Broadcast to other users in the room)
+  /**
+   * CODE CHANGE
+   * Triggered when a participant types in the editor
+   */
   socket.on('code-change', ({ roomId, code }) => {
     if (!roomId) return;
-    const room = getRoomData(roomId);
-    room.code = code || '';
 
-    // Broadcast change to other users in the same room only
-    socket.to(roomId).emit('code-update', { code: room.code });
+    // Security & state check: verify room exists and socket is actually a member
+    if (!rooms.has(roomId) || !socket.rooms.has(roomId)) {
+      socket.emit('room-error', { message: 'Unauthorized code edit: You are not a member of this room.' });
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    room.code = typeof code === 'string' ? code : '';
+
+    // Broadcast only to OTHER participants in the same room to prevent infinite loops
+    socket.to(roomId).emit('code-updated', {
+      code: room.code,
+      senderId: socket.id
+    });
   });
 
-  // Event: language-change
+  /**
+   * LANGUAGE CHANGE
+   * Triggered when a participant switches language selector
+   */
   socket.on('language-change', ({ roomId, language }) => {
     if (!roomId) return;
-    const room = getRoomData(roomId);
+
+    if (!rooms.has(roomId) || !socket.rooms.has(roomId)) {
+      return;
+    }
+
+    const room = rooms.get(roomId);
     room.language = language;
 
-    // Broadcast language change to other users in the room
-    socket.to(roomId).emit('language-update', { language });
+    // Broadcast language change to other participants in the room
+    socket.to(roomId).emit('language-updated', {
+      language: room.language
+    });
   });
 
-  // Event: save-code (Persists code to saved-code.json)
-  socket.on('save-code', ({ roomId, code, language }, callback) => {
-    if (!roomId) return;
-    const room = getRoomData(roomId);
-    room.code = code !== undefined ? code : room.code;
-    room.language = language || room.language;
-
-    const saved = persistData(roomId, room.code, room.language);
-    const timestamp = new Date().toLocaleTimeString();
-
-    if (saved) {
-      if (typeof callback === 'function') {
-        callback({ success: true, timestamp });
-      }
-      io.to(roomId).emit('save-notification', { timestamp });
-    } else {
-      if (typeof callback === 'function') {
-        callback({ success: false, error: 'Could not save to file' });
-      }
-    }
-  });
-
-  // Event: clear-code
+  /**
+   * CLEAR CODE
+   * Triggered when user clicks "Clear Code" button
+   */
   socket.on('clear-code', ({ roomId }) => {
-    if (!roomId) return;
-    const room = getRoomData(roomId);
+    if (!roomId || !rooms.has(roomId) || !socket.rooms.has(roomId)) {
+      return;
+    }
+
+    const room = rooms.get(roomId);
     room.code = '';
 
-    io.to(roomId).emit('code-update', { code: '' });
+    // Broadcast empty code to ALL participants in the room (including sender)
+    io.to(roomId).emit('code-updated', {
+      code: '',
+      senderId: socket.id,
+      action: 'cleared'
+    });
   });
 
-  // Event: disconnect
-  socket.on('disconnect', () => {
-    if (currentRoomId && activeRooms.has(currentRoomId)) {
-      const room = activeRooms.get(currentRoomId);
-      room.users.delete(socket.id);
-      io.to(currentRoomId).emit('user-count-update', { userCount: room.users.size });
+  /**
+   * RESET CODE
+   * Restores starter template for the active room language
+   */
+  socket.on('reset-code', ({ roomId }) => {
+    if (!roomId || !rooms.has(roomId) || !socket.rooms.has(roomId)) {
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    const starter = STARTER_TEMPLATES[room.language] || STARTER_TEMPLATES.javascript;
+    room.code = starter;
+
+    // Broadcast reset code to ALL participants in the room
+    io.to(roomId).emit('code-updated', {
+      code: starter,
+      senderId: socket.id,
+      action: 'reset'
+    });
+  });
+
+  /**
+   * LEAVE ROOM
+   * Explicitly triggered when user clicks "Leave Room" button
+   */
+  socket.on('leave-room', ({ roomId }, callback) => {
+    leaveCurrentRooms();
+    if (typeof callback === 'function') {
+      callback({ success: true });
     }
   });
+
+  /**
+   * DISCONNECT
+   * Socket disconnects (closes tab, refreshes, network loss)
+   */
+  socket.on('disconnect', () => {
+    console.log(`[Socket Disconnected] ID: ${socket.id}`);
+    leaveCurrentRooms();
+  });
 });
 
+// Start Server
 server.listen(PORT, () => {
-  console.log(`Collaborative Code Editor Server running locally on http://localhost:${PORT}`);
-  console.log(`Saved code storage: ${STORAGE_FILE}`);
+  console.log(`====================================================`);
+  console.log(` CodeTogether Backend Server running on port ${PORT}`);
+  console.log(` Local URL: http://localhost:${PORT}`);
+  console.log(` Storage: In-Memory Rooms Map (No Database)`);
+  console.log(`====================================================`);
 });
-
-module.exports = { app, server };

@@ -1,179 +1,248 @@
-# Real-Time Collaborative Code Editor (Localhost)
+# CodeTogether — Real-Time Collaborative Code Editor
 
-A simple, fast, full-stack collaborative code editor that runs entirely on your local computer using `localhost`. Multiple users can join the same coding room, edit code concurrently with real-time updates via Socket.IO, change programming languages, and save their work directly to a local JSON file.
-
-No cloud hosting, no accounts, no login required. The application opens directly to the code editor.
+A full-stack, browser-based collaborative coding application built using **React**, **Node.js**, **Express**, and **Socket.IO**. It allows multiple developers or students to create coding rooms, share a Room ID, write code together, and view synchronized updates in real time with zero page refreshes.
 
 ---
 
-## 1. Features
+## 1. Problem Statement
 
-- **Direct Access:** Opens straight into the editor with zero authentication, login, or registration friction.
-- **Room Management:** Create unique rooms or enter any custom Room ID to join the same shared editing session.
-- **Real-Time Synchronization:** Concurrent edits made in one tab appear automatically in all other tabs in that room with minimal latency.
-- **Infinite Loop Prevention:** Internal update flags ensure socket broadcasts do not bounce back and forth recursively.
-- **Room Isolation:** Different Room IDs remain strictly isolated; edits in Room A are never seen in Room B.
-- **Monaco Code Editor:** Syntax highlighting, line numbers, and clean dark theme (`vs-dark`).
-- **Language Support:** Switch between **JavaScript, Python, Java, and C++** dynamically across all participants.
-- **Local Persistence:** Click **Save Code** to save the room's code and language into `server/saved-code.json`. Rejoining or refreshing the room restores the saved document.
-- **Clear Code:** Clean button to wipe the workspace with confirmation.
-- **Live Presence & Status:** Shows connection indicator (Connected / Disconnected) and count of active users in the room.
+When students or developers collaborate remotely on assignments, algorithmic problem solving, or code reviews, sharing screen streams or repeatedly copying and pasting snippets over messaging apps is tedious, error-prone, and slow. 
+
+Existing commercial solutions (like Google Docs or advanced cloud IDEs) are often heavy, bloated, require account registrations, or use complicated setups. There is a need for a lightweight, beginner-friendly, and instantaneous collaborative code editor where users can open a browser, create a room, and immediately start writing code together.
 
 ---
 
-## 2. Technology Stack
+## 2. Project Objectives
 
-- **Frontend:**
-  - React.js (v18)
-  - Vite
-  - Monaco Editor (`@monaco-editor/react`)
-  - Socket.IO Client
-  - Normal, clean CSS
-- **Backend:**
-  - Node.js
-  - Express.js (Port 5000)
-  - Socket.IO Server (Port 5000)
-  - Local JSON storage (`server/saved-code.json`)
+The primary objectives of this Full Stack Development (FSD) project are:
+1. **Real-Time Code Synchronization:** Broadcast code edits across all connected users in a room with near-zero latency using WebSockets.
+2. **Room-Based Isolation:** Enable multiple pairs or groups of users to work independently in isolated rooms without cross-room interference.
+3. **Beginner-Friendly Architecture:** Keep the stack clean, educational, and easy to explain line-by-line during a college viva or project review.
+4. **No Authentication Friction:** Allow users to instantly create or join rooms without mandatory logins or passwords.
+5. **Multi-Language Support & Starter Templates:** Provide starter code for popular academic languages (JavaScript, Python, Java, C, and HTML).
+6. **Room Management & Presence:** Show live participant counts and dynamic user lists (e.g., User 1, User 2) that update in real time when users join or leave.
 
 ---
 
-## 3. Project Structure
+## 3. Technology Stack
+
+This project strictly adheres to fundamental full-stack web technologies:
+
+### Frontend
+- **HTML5:** Semantic document structure and textarea elements.
+- **CSS3:** Responsive dark theme, flexbox, CSS grid, and custom scrollbars (no heavy styling frameworks like Tailwind or Bootstrap).
+- **JavaScript (ES6+):** Modern JavaScript for state logic and event handling.
+- **React (via Vite):** Functional components and React Hooks (`useState`, `useEffect`, `useRef`).
+- **Socket.IO Client (`socket.io-client`):** WebSocket client library for real-time bidirectional events.
+
+### Backend
+- **Node.js:** JavaScript runtime environment for backend execution.
+- **Express.js:** Lightweight web framework for HTTP endpoints and middleware handling.
+- **Socket.IO:** Real-time event-driven engine managing WebSocket connections, rooms, and broadcasts.
+- **CORS:** Cross-Origin Resource Sharing middleware enabling secure communication between Vite (`localhost:5173`) and Express (`localhost:5000`).
+
+### In-Memory Storage
+- JavaScript `Map` data structures stored in backend memory (`rooms`).
+- *No database is required.* All rooms, participants, code, and language states exist in the server process memory during runtime.
+
+---
+
+## 4. Key Features
+
+- **Instant Room Creation:** Generates a clean, unique 6-character Room ID (e.g., `room-a3x9f2`) and initializes starter code.
+- **Secure Room Joining:** Validates Room ID existence before allowing a user to join, giving clear user-facing error messages if a room is not found.
+- **Bi-directional Live Synchronization:** Every keystroke typed in one tab or device immediately updates all other collaborators in that room.
+- **Infinite Loop Prevention:** Uses a remote-update flag (`isRemoteUpdateRef`) to ensure received code updates do not trigger reciprocal broadcasts.
+- **Tab Key Indentation:** Pressing `Tab` inside the code editor inserts 2 spaces without losing cursor focus.
+- **Language Selector:** Switch between JavaScript, Python, Java, C, and HTML.
+- **Reset Code:** Restores the starter template for the active language across all collaborators.
+- **Clear Code:** Clears the editor canvas for all collaborators.
+- **Active Participants Panel:** Displays active collaborators (`User 1 (You)`, `User 2`, etc.) with live presence dots.
+- **One-Click Copy Room ID:** Copies the Room ID to clipboard with automatic fallback for older browsers and visual "✓ Copied!" feedback.
+- **Status Bar:** Displays room ID, participant count, server connection state (`Connected` / `Disconnected`), and synchronization feedback.
+- **Automatic Room Cleanup:** When all participants leave a room or disconnect, the room is safely deleted from memory to free server resources.
+
+---
+
+## 5. System Architecture
 
 ```
-realtime-collaborative-code-editor/
-├── package.json              # Root project scripts
-├── README.md                 # Complete setup and testing guide
-├── client/                   # Frontend React + Vite application
-│   ├── index.html            # Entry HTML
-│   ├── package.json          # Frontend dependencies
-│   ├── vite.config.js        # Vite config (runs on http://localhost:5173)
-│   └── src/
-│       ├── App.jsx           # Main Collaborative Editor component
-│       ├── index.css         # Styling for header, toolbar, badges, and editor
-│       └── main.jsx          # React DOM entry point
-└── server/                   # Backend Node.js Express + Socket.IO server
-    ├── package.json          # Backend dependencies
-    ├── saved-code.json       # Local file storage for persistent rooms
-    ├── server.js             # Express API & Socket.IO room coordination
-    └── test-local.js         # Automated end-to-end test script
++-------------------------------------------------------------------+
+|                        Client 1 (Browser)                         |
+|   React (Vite) + Plain CSS + HTML Textarea + Socket.IO Client     |
++---------------------------------+---------------------------------+
+                                  |
+               WebSocket Events   |   (code-change, join-room, etc.)
+                                  v
++-------------------------------------------------------------------+
+|                     Backend Server (Node.js)                      |
+|                  Express + Socket.IO (Port 5000)                  |
+|                                                                   |
+|   In-Memory Storage:                                              |
+|   rooms = Map {                                                   |
+|     'room-xyz' => {                                               |
+|        code: string,                                              |
+|        language: 'javascript',                                    |
+|        participants: Map { socketId => { username } }             |
+|     }                                                             |
+|   }                                                               |
++---------------------------------+---------------------------------+
+                                  |
+               WebSocket Events   |   (code-updated, participants)
+                                  v
++-------------------------------------------------------------------+
+|                        Client 2 (Browser)                         |
+|   React (Vite) + Plain CSS + HTML Textarea + Socket.IO Client     |
++-------------------------------------------------------------------+
+```
+
+### How Socket.IO Enables Real-Time Collaboration
+1. **Connection Handshake:** When the user opens the application, `socket.io-client` establishes a persistent, bi-directional WebSocket connection with the Express server.
+2. **Room Subscription:** When a user creates or joins a room, the server executes `socket.join(roomId)`. Socket.IO internally maps that socket ID to that specific room channel.
+3. **Targeted Broadcasting:** When User 1 types code, the client emits `code-change` with `{ roomId, code }`. The server validates that User 1 is indeed in `roomId`, updates the in-memory room code, and broadcasts `code-updated` via `socket.to(roomId).emit(...)`.
+   - The `.to(roomId)` ensures only users in the same room receive the update.
+   - Using `socket.to(...)` instead of `io.to(...)` sends the payload to everyone *except* the sender, avoiding cursor jumps and infinite event loops.
+4. **Presence Lifecycle:** When a socket disconnects, the server's `disconnect` event listener removes the socket from the participants map and emits `participants-updated` to remaining members. If the room is empty, it is deleted.
+
+---
+
+## 6. Project Folder Structure
+
+```
+codetogether/
+├── client/                      # Frontend Application (React + Vite)
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── Navbar.jsx       # Header, Room ID display, copy & leave buttons
+│   │   │   ├── Home.jsx         # Landing page (Create & Join room forms, features)
+│   │   │   ├── Editor.jsx       # Textarea editor, language dropdown, clear/reset, statusbar
+│   │   │   └── Participants.jsx # Active collaborators list & presence
+│   │   ├── App.jsx              # Main App component & Socket.IO state management
+│   │   ├── main.jsx             # React DOM entry point
+│   │   └── index.css            # Dark theme styles & responsive CSS
+│   ├── index.html               # Main HTML entry file
+│   ├── package.json             # Frontend dependencies & Vite scripts
+│   └── vite.config.js           # Vite dev server configuration
+├── server/                      # Backend Server (Node.js + Express + Socket.IO)
+│   ├── server.js                # Express app, Socket.IO handlers, in-memory rooms
+│   ├── test-realtime.js         # Automated end-to-end socket testing script
+│   └── package.json             # Backend dependencies & start scripts
+├── package.json                 # Root package helper scripts
+└── README.md                    # Comprehensive documentation
 ```
 
 ---
 
-## 4. Installation
+## 7. Installation & Setup Instructions
 
-Clone or open the project folder in your terminal:
+### Prerequisites
+- **Node.js** (v18.x or newer installed on your machine)
+- **npm** (comes bundled with Node.js)
+- A modern web browser (Chrome, Edge, Firefox, or Brave)
 
+### Step 1: Clone or Navigate to the Project Folder
+Open your terminal or command prompt:
 ```bash
-cd realtime-collaborative-code-editor
+cd codetogether
 ```
 
-### 1. Install Backend Dependencies
+### Step 2: Install Backend Dependencies
+Navigate to the `server` directory and install the packages:
 ```bash
 cd server
 npm install
-cd ..
 ```
+*(On Windows PowerShell, use `npm.cmd install` if script execution policies apply)*
 
-### 2. Install Frontend Dependencies
+### Step 3: Install Frontend Dependencies
+Open a separate terminal window or return to root, navigate to the `client` directory, and install the packages:
 ```bash
-cd client
+cd ../client
 npm install
-cd ..
 ```
 
 ---
 
-## 5. Starting the Application
+## 8. Running the Application
 
-You can start the backend and frontend using two separate terminal windows.
-
-### Terminal 1 — Start Backend Server (Port 5000)
+### 1. Start the Backend Server
+In your first terminal (inside the `server` directory):
 ```bash
-cd server
 npm start
 ```
-*Output:*
-```
-Collaborative Code Editor Server running locally on http://localhost:5000
-Saved code storage: .../server/saved-code.json
-```
+The server will start listening on:
+`http://localhost:5000`
 
-### Terminal 2 — Start Frontend Application (Port 5173)
+### 2. Start the Frontend Development Server
+In your second terminal (inside the `client` directory):
 ```bash
-cd client
 npm run dev
 ```
-*Output:*
-```
-  VITE v5.x.x  ready in 200 ms
-
-  ➜  Local:   http://localhost:5173/
-  ➜  Network: use --host to expose
-```
+Vite will launch the local web server at:
+`http://localhost:5173`
 
 ---
 
-## 6. How to Test Real-Time Collaboration
+## 9. How to Test Real-Time Collaboration
 
-Follow this test to verify real-time collaboration on your computer:
+Follow this step-by-step workflow:
 
-1. **Open Tab 1:**
-   - In your browser (e.g. Chrome), open:
-     `http://localhost:5173`
-   - Notice the connection badge says **Connected** (green dot).
-   - The editor loads with the default room (`main-room`).
+1. Open your browser and navigate to **`http://localhost:5173`**.
+2. **Tab 1 (Creator):**
+   - In the "Create New Room" card, enter your name (e.g., *Alice*) or leave it blank.
+   - Click **Create Room**.
+   - You will be redirected to the editor workspace with a newly generated Room ID (e.g., `room-k9m2p4`).
+   - Click the **📋 Copy Room ID** button in the top navigation bar.
+3. **Tab 2 (Collaborator):**
+   - Open a second browser tab (or Incognito window) and navigate to **`http://localhost:5173`**.
+   - In the "Join Existing Room" card, paste the Room ID and enter your name (e.g., *Bob*).
+   - Click **Join Room**.
+4. **Verify Real-Time Synchronization:**
+   - Both tabs now show the same code editor and display **Active Users (2)** in the sidebar with *Alice* and *Bob*.
+   - Start typing code in Tab 1; observe Tab 2 updating simultaneously in real time.
+   - Type code in Tab 2; observe Tab 1 updating instantly.
+   - Try the **Language Selector**, **Reset Code**, and **Clear Code** buttons to observe synchronized changes.
+   - Close Tab 2; observe Tab 1 updating its participant count to 1 immediately.
 
-2. **Open Tab 2:**
-   - In a second tab or separate window, open:
-     `http://localhost:5173`
-   - Both tabs are now in `main-room` and show **Users in room: 2**.
-
-3. **Test Real-Time Editing:**
-   - Type code in Tab 1 (e.g. `console.log("Hello from Tab 1!");`).
-   - Look at Tab 2: The code appears automatically in real-time without refreshing!
-   - Now type in Tab 2: The change reflects in Tab 1 immediately.
-
-4. **Test Language Switching:**
-   - In Tab 1, change the **Language** dropdown from `JavaScript` to `Python`.
-   - In Tab 2, the language updates to `Python` and syntax highlighting changes accordingly.
-
-5. **Test Creating & Joining a Custom Room:**
-   - In Tab 1, click **+ Create Room**. A new Room ID (e.g. `room-k8f9a2`) is generated and joined.
-   - Copy or note the new Room ID.
-   - In Tab 2, paste that Room ID into the top input box and click **Join Room**.
-   - Both tabs are now connected to the new room, completely isolated from `main-room`.
-
-6. **Test Saving Code Locally:**
-   - Type some code in the room.
-   - Click **💾 Save Code**.
-   - The status bar displays `Saved to saved-code.json at <time>`.
-   - Open `server/saved-code.json` in your file explorer or text editor: your code is physically saved to your hard drive!
-   - Refresh both browser tabs: the room reloads with your saved code restored.
-
-7. **Test Clear Code:**
-   - Click **🗑️ Clear Code** and confirm.
-   - The editor clears in all tabs connected to that room.
-
----
-
-## 7. Automated Testing
-
-You can run the built-in test script to verify that the backend, WebSockets, room isolation, and JSON persistence are working:
-
+### Running Automated Test Suite
+An automated verification test script is included to validate the entire backend and Socket.IO engine:
 ```bash
 cd server
-npm test
+node test-realtime.js
 ```
+This tests:
+- HTTP health endpoint
+- Room creation and unique ID generation
+- Nonexistent room validation & error responses
+- Multi-client joining & participant notifications
+- Bidirectional code synchronization
+- Room isolation (preventing cross-room leaks)
+- Clear Code and Reset Code synchronization
+- Disconnection cleanup
 
-Expected output:
-```
-  ✓ Health check (GET /api/health)
-  ✓ Socket.IO Connection & Join Room
-  ✓ Real-Time Code Sync between two clients
-  ✓ Language Sync across room clients
-  ✓ Room Isolation (Different rooms do not share updates)
-  ✓ Save Code to disk (saved-code.json)
+---
 
-TEST SUMMARY: 6 PASSED, 0 FAILED
-```
+## 10. Limitations & Future Enhancements
+
+### Limitations
+1. **In-Memory Storage:** All rooms and active code are held in the server's JavaScript memory. If the backend server restarts, active rooms and unsaved code will be reset.
+2. **Concurrent Cursor Tracking:** The editor uses standard HTML `<textarea>`. While code updates synchronize instantly, individual colored user cursors or selection highlights are not rendered.
+3. **No Execution Sandbox:** Code is synchronized and displayed with syntax-friendly styling, but code execution (running programs on the server) is omitted to keep the project secure, lightweight, and focused on real-time communication.
+
+### Future Enhancements
+- **Persistent Storage:** Integrate MongoDB or SQLite to persist rooms and revision history across server restarts.
+- **Operational Transformation (OT) or CRDTs:** Implement Yjs or Automerge for granular character-by-character conflict resolution during simultaneous high-speed typing.
+- **Audio/Video Chat:** Integrate WebRTC for peer-to-peer audio calls alongside coding.
+- **Code Execution Container:** Add Docker or WebAssembly-based code runners (e.g., Pyodide) to execute code directly in the browser safely.
+
+---
+
+## 11. Viva & Review Summary
+
+| Question | Answer |
+| :--- | :--- |
+| **Why WebSockets instead of HTTP polling?** | HTTP polling requires repeated request-response cycles with header overhead and delay. WebSockets maintain a persistent, low-overhead TCP connection allowing the server to push code edits to clients instantly. |
+| **How do rooms work?** | Socket.IO provides a built-in `socket.join(roomId)` feature. Broadcasts sent with `socket.to(roomId).emit(...)` are routed only to sockets subscribed to that specific room channel. |
+| **How is an infinite update loop avoided?** | When a client receives `code-updated` from the server, a ref flag (`isRemoteUpdateRef`) is set to `true`. The editor's `onChange` checks this flag and skips emitting `code-change` back to the server. |
+| **Where is the data stored?** | In-memory inside JavaScript `Map` objects on the Node.js server. |
