@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: collaborative-code-editor-api
+    runtime: node
+    rootDir: server
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: NODE_ENV
+        value: production
+      - key: CLIENT_URL
+        value: https://client-orpin-alpha-49.vercel.app
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGODB_URI
+        sync: false
