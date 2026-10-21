@@ -1,140 +1,246 @@
-require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-const mongoose = require('mongoose');
 const { Server } = require('socket.io');
-
-const authRoutes = require('./routes/authRoutes');
-const roomRoutes = require('./routes/roomRoutes');
-const documentRoutes = require('./routes/documentRoutes');
-const setupSocket = require('./sockets/socketHandler');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
 
-// Environment variable validation
 const PORT = process.env.PORT || 5000;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/collaborative-editor';
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const STORAGE_FILE = path.join(__dirname, 'saved-code.json');
 
-// Allowed CORS origins
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  CLIENT_URL
-].filter(Boolean);
-
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, curl, or Postman)
-    if (!origin) return callback(null, true);
-
-    const isAllowed = allowedOrigins.some((allowed) => {
-      if (allowed === '*') return true;
-      return origin === allowed || origin.startsWith(allowed);
-    });
-
-    if (isAllowed || process.env.NODE_ENV !== 'production') {
-      callback(null, true);
-    } else {
-      callback(new Error(`Origin ${origin} not permitted by CORS policy`));
-    }
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
+// Middlewares
+app.use(cors({
+  origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
+  methods: ['GET', 'POST'],
   credentials: true
-};
-
-// Express Middleware
-app.use(cors(corsOptions));
+}));
 app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 
-// Socket.IO configuration
+// In-memory active room storage:
+// roomId -> { code: string, language: string, users: Set(socketId) }
+const activeRooms = new Map();
+
+// Helper to read saved code from saved-code.json
+function loadSavedData() {
+  try {
+    if (!fs.existsSync(STORAGE_FILE)) {
+      fs.writeFileSync(STORAGE_FILE, JSON.stringify({}, null, 2), 'utf-8');
+      return {};
+    }
+    const data = fs.readFileSync(STORAGE_FILE, 'utf-8');
+    return JSON.parse(data || '{}');
+  } catch (err) {
+    console.error('Error reading saved-code.json:', err.message);
+    return {};
+  }
+}
+
+// Helper to write saved code to saved-code.json
+function persistData(roomId, code, language) {
+  try {
+    const allData = loadSavedData();
+    allData[roomId] = {
+      code,
+      language: language || 'javascript',
+      updatedAt: new Date().toISOString()
+    };
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(allData, null, 2), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('Error writing to saved-code.json:', err.message);
+    return false;
+  }
+}
+
+// Helper to get or initialize room data
+function getRoomData(roomId) {
+  if (activeRooms.has(roomId)) {
+    return activeRooms.get(roomId);
+  }
+
+  // Check saved-code.json if previously saved
+  const savedData = loadSavedData();
+  const savedRoom = savedData[roomId];
+
+  const initialCode = savedRoom
+    ? savedRoom.code
+    : `// Welcome to Real-Time Collaborative Code Editor!\n// Room: ${roomId}\n\nfunction main() {\n  console.log("Hello from room ${roomId}!");\n}\n\nmain();\n`;
+
+  const initialLang = savedRoom ? savedRoom.language : 'javascript';
+
+  const roomState = {
+    code: initialCode,
+    language: initialLang,
+    users: new Set()
+  };
+
+  activeRooms.set(roomId, roomState);
+  return roomState;
+}
+
+// REST Endpoints
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Collaborative Code Editor Server running locally on port ' + PORT,
+    activeRoomsCount: activeRooms.size
+  });
+});
+
+app.get('/api/rooms/:roomId', (req, res) => {
+  const { roomId } = req.params;
+  const room = getRoomData(roomId);
+  res.json({
+    roomId,
+    code: room.code,
+    language: room.language,
+    userCount: room.users.size
+  });
+});
+
+app.post('/api/rooms/:roomId/save', (req, res) => {
+  const { roomId } = req.params;
+  const { code, language } = req.body;
+  const success = persistData(roomId, code, language);
+  if (success) {
+    res.json({ success: true, message: 'Code saved successfully to saved-code.json' });
+  } else {
+    res.status(500).json({ success: false, message: 'Failed to write code to disk' });
+  }
+});
+
+// Socket.IO Real-time setup
 const io = new Server(server, {
   cors: {
-    origin: allowedOrigins,
+    origin: ['http://localhost:5173', 'http://127.0.0.1:5173'],
     methods: ['GET', 'POST'],
     credentials: true
   }
 });
 
-// Setup socket event handlers
-setupSocket(io);
+io.on('connection', (socket) => {
+  let currentRoomId = null;
 
-// Health check endpoint
-app.get('/api/health', (req, res) => {
-  const dbStatus = mongoose.connection.readyState;
-  const dbStatusMap = {
-    0: 'Disconnected',
-    1: 'Connected',
-    2: 'Connecting',
-    3: 'Disconnecting'
-  };
+  // Event: create-room
+  socket.on('create-room', (callback) => {
+    // Generate clean 6-character room id
+    const newRoomId = 'room-' + Math.random().toString(36).substring(2, 8);
+    const room = getRoomData(newRoomId);
 
-  res.status(200).json({
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    database: {
-      status: dbStatusMap[dbStatus] || 'Unknown',
-      connected: dbStatus === 1
+    if (typeof callback === 'function') {
+      callback({ roomId: newRoomId, code: room.code, language: room.language });
+    }
+  });
+
+  // Event: join-room
+  socket.on('join-room', ({ roomId }, callback) => {
+    if (!roomId || !roomId.trim()) {
+      if (typeof callback === 'function') callback({ error: 'Room ID is required' });
+      return;
+    }
+
+    const cleanRoomId = roomId.trim();
+
+    // Leave any previous room
+    if (currentRoomId) {
+      socket.leave(currentRoomId);
+      const prevRoom = activeRooms.get(currentRoomId);
+      if (prevRoom) {
+        prevRoom.users.delete(socket.id);
+        io.to(currentRoomId).emit('user-count-update', { userCount: prevRoom.users.size });
+      }
+    }
+
+    currentRoomId = cleanRoomId;
+    socket.join(cleanRoomId);
+
+    const room = getRoomData(cleanRoomId);
+    room.users.add(socket.id);
+
+    // Notify room of user count
+    io.to(cleanRoomId).emit('user-count-update', { userCount: room.users.size });
+
+    // Send latest existing room code & language to the newly joined user
+    if (typeof callback === 'function') {
+      callback({
+        success: true,
+        roomId: cleanRoomId,
+        code: room.code,
+        language: room.language,
+        userCount: room.users.size
+      });
+    }
+
+    socket.emit('code-update', { code: room.code, language: room.language });
+  });
+
+  // Event: code-change (Broadcast to other users in the room)
+  socket.on('code-change', ({ roomId, code }) => {
+    if (!roomId) return;
+    const room = getRoomData(roomId);
+    room.code = code || '';
+
+    // Broadcast change to other users in the same room only
+    socket.to(roomId).emit('code-update', { code: room.code });
+  });
+
+  // Event: language-change
+  socket.on('language-change', ({ roomId, language }) => {
+    if (!roomId) return;
+    const room = getRoomData(roomId);
+    room.language = language;
+
+    // Broadcast language change to other users in the room
+    socket.to(roomId).emit('language-update', { language });
+  });
+
+  // Event: save-code (Persists code to saved-code.json)
+  socket.on('save-code', ({ roomId, code, language }, callback) => {
+    if (!roomId) return;
+    const room = getRoomData(roomId);
+    room.code = code !== undefined ? code : room.code;
+    room.language = language || room.language;
+
+    const saved = persistData(roomId, room.code, room.language);
+    const timestamp = new Date().toLocaleTimeString();
+
+    if (saved) {
+      if (typeof callback === 'function') {
+        callback({ success: true, timestamp });
+      }
+      io.to(roomId).emit('save-notification', { timestamp });
+    } else {
+      if (typeof callback === 'function') {
+        callback({ success: false, error: 'Could not save to file' });
+      }
+    }
+  });
+
+  // Event: clear-code
+  socket.on('clear-code', ({ roomId }) => {
+    if (!roomId) return;
+    const room = getRoomData(roomId);
+    room.code = '';
+
+    io.to(roomId).emit('code-update', { code: '' });
+  });
+
+  // Event: disconnect
+  socket.on('disconnect', () => {
+    if (currentRoomId && activeRooms.has(currentRoomId)) {
+      const room = activeRooms.get(currentRoomId);
+      room.users.delete(socket.id);
+      io.to(currentRoomId).emit('user-count-update', { userCount: room.users.size });
     }
   });
 });
 
-// API Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/rooms', roomRoutes);
-app.use('/api/documents', documentRoutes);
-
-// 404 handler for unknown routes
-app.use((req, res, next) => {
-  res.status(404).json({ message: `Route ${req.originalUrl} not found` });
+server.listen(PORT, () => {
+  console.log(`Collaborative Code Editor Server running locally on http://localhost:${PORT}`);
+  console.log(`Saved code storage: ${STORAGE_FILE}`);
 });
-
-// Centralized error handling middleware
-app.use((err, req, res, next) => {
-  console.error('Unhandled server error:', err.message);
-
-  const statusCode = err.statusCode || err.status || 500;
-  const response = {
-    message: err.message || 'Internal Server Error'
-  };
-
-  // Do not expose stack traces to the client
-  if (process.env.NODE_ENV === 'development') {
-    response.stack = err.stack;
-  }
-
-  res.status(statusCode).json(response);
-});
-
-// Connect to MongoDB and start HTTP/Socket server
-const startServer = async () => {
-  try {
-    console.log('Connecting to MongoDB...');
-    await mongoose.connect(MONGODB_URI);
-    console.log('Successfully connected to MongoDB.');
-
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT}`);
-      console.log(`Health check available at http://localhost:${PORT}/api/health`);
-    });
-  } catch (error) {
-    console.error('Database connection error:', error.message);
-    console.log('Starting HTTP server in degraded mode (DB disconnected)...');
-    server.listen(PORT, () => {
-      console.log(`Server running on port ${PORT} without active database connection.`);
-    });
-  }
-};
-
-// Export app and server for testing
-if (process.env.NODE_ENV !== 'test') {
-  startServer();
-}
 
 module.exports = { app, server };
